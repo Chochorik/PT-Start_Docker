@@ -1,0 +1,8 @@
+[Unit]
+Description=Telegram Bot
+After=network.target
+
+[Service]
+EnvironmentFile=/opt/telegram_bot/app/.env
+ExecStart=python3 /opt/telegram_bot/app/main.py
+Restart=always

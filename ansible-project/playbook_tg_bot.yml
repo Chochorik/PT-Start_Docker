@@ -1,0 +1,215 @@
+---
+- name: Установка Telegram-бота, PostgreSQL и репликации
+  hosts: all
+  vars:
+    bot_repo_url: 'https://github.com/Chochorik/PT-Start_bot.git'
+    bot_app_path: '/opt/telegram_bot/app'
+    bot_service_name: 'telegram_bot'
+    postgresql_version: '14'
+    postgresql_master_ip: '192.168.0.105'
+    postgresql_slave_ip: '192.168.0.106'
+    postgresql_replication_user: 'replicator'
+    postgresql_replication_password: 'replicator'
+    telegram_token: '6931421420:AAHzTR7Vi2gDkm9tuePvgLlNtgJLSYKPZZU'
+    db_user: 'postgres'
+    db_password: 'Qq12345'
+    db_host: '192.168.0.105'
+    db_port: '5432'
+    db_name: 'python_bot_db'
+    db_postgres_password: 'Qq12345'
+    ansible_user: ansible
+  tasks:
+    - name: Установка зависимостей (Bot&Master)
+      apt:
+        name:
+          - python3
+          - python3-pip
+          - git
+        state: present
+        update_cache: yes
+      become: yes
+      when: "'bot' in group_names or 'db_master' in group_names or 'db_slave' in group_names"
+
+    - name: Клонирование репозитория бота
+      git:
+        repo: "{{ bot_repo_url }}"
+        dest: "{{ bot_app_path }}"
+        version: HEAD
+        force: yes
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Установка зависимостей бота
+      pip:
+        requirements: "{{ bot_app_path }}/requirements.txt"
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Установка psycopg2
+      pip:
+        name: psycopg2-binary
+        state: present
+      become: yes
+      when: "'bot' in group_names or 'db_master' in group_names or 'db_slave' in group_names"
+
+    - name: Копирование файла .env
+      template:
+        src: bot.env.j2
+        dest: "{{ bot_app_path }}/.env"
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Настройка systemd сервиса для бота
+      template:
+        src: bot.service.j2
+        dest: /etc/systemd/system/{{ bot_service_name }}.service
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Перезапуск daemon
+      systemd_service:
+        daemon-reload: true
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Перезапуск и включение сервиса бота
+      systemd:
+        name: "{{ bot_service_name }}"
+        state: started
+        enabled: yes
+      become: yes
+      when: "'bot' in group_names"
+
+    - name: Установка PostgreSQL
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+        state: present
+        update_cache: yes
+      become: yes
+      when: "'db_master' in group_names or 'db_slave' in group_names"
+
+    - name: Настройка PostgreSQL (Master)
+      template:
+        src: config-postgresql/postgresql.conf.j2
+        dest: /etc/postgresql/{{ postgresql_version }}/main/postgresql.conf
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Настройка доступа PostgreSQL
+      template:
+        src: config-postgresql/pg_hba.conf.j2
+        dest: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: .pgpass copy
+      template:
+        src: pgpass.j2
+        dest: ~/.pgpass
+        mode: 0600
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Перезапуск PostgreSQL
+      systemd:
+        name: postgresql
+        state: restarted
+        enabled: yes
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Creating postgres user
+      become: yes
+      become_user: postgres
+      shell: "psql -c \"ALTER ROLE {{ db_user }} PASSWORD '{{ db_password }}';\""
+      when: "'db_master' in group_names"
+
+    - name: Creating replicator user
+      postgresql_user:
+        name: "{{ postgresql_replication_user }}"
+        password: "{{ postgresql_replication_password }}"
+        role_attr_flags: REPLICATION
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Создание базы данных
+      become_user: postgres
+      postgresql_db:
+        name: "{{ db_name }}"
+        owner: postgres
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Создание таблицы emails
+      become_user: postgres
+      postgresql_table:
+        db: "{{ db_name }}"
+        name: "emails"
+        columns:
+          - "id SERIAL PRIMARY KEY"
+          - "emailAddress VARCHAR(255) UNIQUE NOT NULL"
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Создание таблицы phoneNumbers
+      become_user: postgres
+      postgresql_table:
+        name: "phoneNumbers"
+        db: "{{ db_name }}"
+        columns:
+          - "id SERIAL PRIMARY KEY"
+          - "phoneNumber VARCHAR(20) UNIQUE NOT NULL"
+      become: yes
+      when: "'db_master' in group_names"
+
+    - name: Configure Slave rights
+      file:
+        path: "/var/lib/postgresql/{{ postgresql_version }}/main/"
+        owner: postgres
+        group: postgres
+        state: directory
+        recurse: yes
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: pg_hba config slave
+      template:
+        src: config-postgresql/pg_hba.conf.j2
+        dest: /etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Restart
+      service:
+        name: postgresql
+        state: restarted
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Stopping slave
+      service:
+        name: postgresql
+        state: stopped
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Удаление старых данных PostgreSQL (Slave)
+      file:
+        path: "/var/lib/postgresql/{{ postgresql_version }}/main"
+        state: absent
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Выполнение pg_basebackup для реплики
+      command: "pg_basebackup -R -h {{ postgresql_master_ip }} -U {{ postgresql_replication_user }} -D /var/lib/postgresql/{{ postgresql_version }}/main"
+      become: yes
+      when: "'db_slave' in group_names"
+
+    - name: Перезапуск PostgreSQL (Slave)
+      service:
+        name: postgresql
+        state: started
+      become: yes
+      when: "'db_slave' in group_names"
