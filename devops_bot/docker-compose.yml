@@ -4,7 +4,7 @@ services:
   bot:
     image: bot_image
     build:
-      context: ./bot_image
+      context: ./bot
     depends_on:
       - db
     environment:
@@ -17,14 +17,14 @@ services:
       - POSTGRESQL_PASSWORD=${POSTGRESQL_PASSWORD}
       - POSTGRESQL_HOST=${POSTGRESQL_HOST}
       - POSTGRESQL_PORT=${POSTGRESQL_PORT}
-      - POSTGRESQL_DB=${POSTGRES_DB}
+      - POSTGRESQL_DB=${POSTGRESQL_DB}
     restart: always
 
   db:
     image: db_image
-    container_name: db_container
+    container_name: db
     build:
-      context: ./db_image
+      context: ./db
     environment:
       - POSTGRES_USER=${POSTGRESQL_USER}
       - POSTGRES_PASSWORD=${POSTGRESQL_PASSWORD}
@@ -35,24 +35,24 @@ services:
   db_slave:
     image: db_repl_image
     build:
-      context: ./db_repl_image
+      context: ./db_repl
     depends_on:
       - db
     ports:
       - "5433:5432"
     restart: always
-    environment: 
+    environment:
       - PGUSER=${POSTGRESQL_REPL_USERNAME}
       - PGPASSWORD=${POSTGRESQL_REPL_PASSWORD}
-    command: | 
+    command: |
       bash -c "
-      until pg_basebackup -R -h db -U repl_user -D /var/lib/postgresql/data -P   
-      do 
-      echo 'Waiting for primary to connect...' 
-      sleep 1s 
-      done 
-      echo 'Backup done, starting replica...' 
-      chmod 0700 /var/lib/postgresql/data 
+      until pg_basebackup -R -h db -U repl_user -D /var/lib/postgresql/data -P
+      do
+      echo 'Waiting for primary to connect...'
+      sleep 1s
+      done
+      echo 'Backup done, starting replica...'
+      chmod 0700 /var/lib/postgresql/data
       echo 'Chmod is completed'
       postgres
       "

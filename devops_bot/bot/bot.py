@@ -60,7 +60,7 @@ def save_emails_to_db(emails):
         cursor = connection.cursor()
 
         for email in emails:
-            cursor.execute("INSERT INTO emails (emailAddress) VALUES (%s)", (email,))
+            cursor.execute('INSERT INTO emails("email") VALUES (%s)', (email,))
             connection.commit()
 
         cursor.close()
@@ -100,7 +100,7 @@ def save_phone_numbers_to_db(phone_numbers):
         cursor = connection.cursor()
 
         for phone_number in phone_numbers:
-            cursor.execute("INSERT INTO phoneNumbers (phoneNumber) VALUES (%s)", (phone_number,))
+            cursor.execute('INSERT INTO phoneNumbers("phone") VALUES (%s)', (phone_number,))
             connection.commit()
 
         cursor.close()
